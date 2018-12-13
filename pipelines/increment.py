@@ -28,7 +28,7 @@ def increment(fn, outdir, delay, benchmark_file, start_time, avg):
     inc_data = im.get_data() + 1
 
     if avg is not None:
-        inc_data += nib.load(avg).get_data().astype(inc_data.dtype, copy=False)
+        inc_data += nib.load(avg).get_data()
 
     im = nib.Nifti1Image(inc_data, affine=im.affine, header=im.header)
 

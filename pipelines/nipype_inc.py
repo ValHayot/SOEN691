@@ -218,7 +218,7 @@ def computed_avg_node(node_name, nnodes, work_dir,
 def compute_avg(chunks, benchmark, benchmark_dir):
     from time import time
     import nibabel as nib
-    from numpy import eye
+    from numpy import eye, float64, uint16
     from os.path import abspath
    
     chunks = [fn for c in chunks for fn in c]
@@ -227,16 +227,16 @@ def compute_avg(chunks, benchmark, benchmark_dir):
     num_chunks = len(chunks)
 
     for c in chunks:
-        im_data = nib.load(c).get_data()
+        im_data = nib.load(c).get_data().astype(float64, casting='safe')
         
         if avg is None:
             avg = im_data
         else:
-            avg += im_data.astype(avg.dtype, copy=False)
+            avg += im_data
 
     avg /= num_chunks
     fn = 'avg.nii'
-    avg_im = nib.Nifti1Image(avg, eye(4))
+    avg_im = nib.Nifti1Image(avg.astype(uint16), eye(4))
     nib.save(avg_im, fn)
 
     return abspath(fn)
@@ -328,7 +328,6 @@ def get_partitions(chunks, nnodes):
     pn_remain = None
     files = []
 
-    print(chunks)
     if chunks is not None:
         num_images = len(chunks)
         pn_images = num_images / nnodes
@@ -464,7 +463,9 @@ def main():
             
             if args.plugin == 'SLURM':
                 wf.connect([(ca_1, inc_2, [('avg_chunk', 'avg')])])
-                wf.connect([(inc_2, ca_2, [('inc_chunk', 'chunks')])])
+
+                if i < args.iterations - 2:
+                    wf.connect([(inc_2, ca_2, [('inc_chunk', 'chunks')])])
 
 
             inc_1 = inc_2

@@ -46,18 +46,17 @@ def test_compute_avg():
     images = [i for c in [chunks] for i in c]
 
     data = None
-    print(images)
 
     for im in images:
         if data is None:
-            data = nib.load(im).get_data()
+            data = nib.load(im).get_data().astype(np.float64, copy=False)
         else:
-            data += nib.load(im).get_data().astype(data.dtype, copy=False)
+            data += nib.load(im).get_data().astype(np.float64, copy=False)
 
     data = data / len(images)
 
     assert op.isfile(avg)
-    assert np.array_equal(nib.load(avg).get_data(), data)
+    assert np.array_equal(nib.load(avg).get_data(), data.astype(np.uint16))
 
 def test_compute_avg_wf():
     from nipype import Workflow
@@ -102,34 +101,97 @@ def test_compute_avg_wf():
                                  .result
                                  .outputs
                                  .inc_chunk)
+    avg_file = (result_dict['ca2_{0}'.format('ca_bb')]
+                                 .result
+                                 .outputs
+                                 .avg_chunk)
+    inc1_chunks = (result_dict['ca1_{0}'.format('ca_bb')]
+                                 .result
+                                 .outputs
+                                 .inc_chunk)
 
     results = [i for c in saved_chunks for i in c]
+    inc1 = [i for c in inc1_chunks for i in c]
+
+    im_1 = nib.load(chunks[0])
+    im_3 = nib.load(chunks[1])
     
-    im_1 = nib.load(chunks[0]).get_data()
-    im_3 = nib.load(chunks[1]).get_data()
+    assert np.array_equal(im_3.get_data(), nib.load(chunks[1]).get_data())
 
-    avg = ((im_1 + 1) + (im_3 + 1)) / 2
+    im_1_inc = (im_1.get_data() + 1)
+    im_3_inc = (im_3.get_data() + 1)
+    nib.save(nib.Nifti1Image(im_1_inc, im_1.affine, im_1.header),
+             'test-inc1_1.nii')
+    nib.save(nib.Nifti1Image(im_3_inc, im_3.affine, im_3.header),
+             'test-inc3_1.nii')
 
-    im_1 = im_1 + 1 + avg + 1
-    im_3 = im_3 + 1 + avg + 1
+    for i in inc1:
+        if 'dummy_1' in i:
+            assert np.array_equal(nib.load(i).get_data(),
+                                  nib.load('test-inc1_1.nii').get_data())
+        else:
+            assert np.array_equal(nib.load(i).get_data(),
+                                  nib.load('test-inc3_1.nii').get_data())
+
+    avg = None
+
+    for i in [im_1_inc, im_3_inc]:
+        if avg is None:
+            avg = i.astype(np.float64, casting='safe')
+        else:
+            avg += i.astype(np.float64, casting='safe')
+
+    avg /= len([im_1_inc, im_3_inc])
+
+    nib.save(nib.Nifti1Image(avg.astype(np.uint16), np.eye(4)), 't_avg.nii')
+
+    assert np.array_equal(nib.load(avg_file).get_fdata(),
+                          nib.load('t_avg.nii').get_fdata()) 
+
+    im_1_inc_2 = nib.load('test-inc1_1.nii').get_data() + 1
+    im_3_inc_2 = nib.load('test-inc3_1.nii').get_data() + 1
+
+    avg = nib.load('t_avg.nii').get_data()
+    im_1_ca = (im_1_inc_2 + avg)
+    im_3_ca = (im_3_inc_2 + avg)
+
+    nib.save(nib.Nifti1Image(im_1_ca, im_1.affine, im_1.header), 
+            'test-inc1_2.nii')
+    nib.save(nib.Nifti1Image(im_3_ca, im_3.affine, im_3.header), 
+            'test-inc3_2.nii')
+
 
     for i in results:
         assert op.isfile(i)
-        if '1' in i:
-            assert np.array_equal(nib.load(i).get_data(), im_1)
+        ca_res = nib.load(i)
+        ca_res = ca_res.get_data().astype(np.uint16)
+        if 'inc-dummy_1.nii' in i:
+            im = nib.load('test-inc1_2.nii')
+            exp = im.get_data().astype(np.uint16)
+            assert np.array_equal(ca_res, exp)
         else:
-            assert np.array_equal(nib.load(i).get_data(), im_3)
+            im = nib.load('test-inc3_2.nii')
+            exp = im.get_data().astype(np.uint16)
+            assert np.array_equal(ca_res, exp)
 
 
-'''
-def test_benchmark_nipype():
-
-    shutil.rmtree('npinc_out')
-    p = subprocess.Popen(['python', 'pipelines/nipype_inc.py', 'sample_data',
-                          'npinc_out', '1', '--benchmark'],
+    p = subprocess.Popen(['python', 'pipelines/spark_inc.py', 'sample_data',
+                          'spca_out', '2', '--benchmark', '--computed_avg'],
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE)
     (out, err) = p.communicate()
 
-    out = [fn for fn in os.listdir('npinc_out') if fn.startswith('benchmark')]
-    assert len(out) == 1'''
+    h_prog_1 = hashlib.md5(open('spca_out/inc2-dummy_1.nii', 'rb').read()) \
+                       .hexdigest()
+    h_exp_1 = hashlib.md5(open('test-inc1_2.nii', 'rb')
+                           .read()) \
+                      .hexdigest()
+
+    h_prog_2 = hashlib.md5(open('spca_out/inc2-dummy_3.nii', 'rb').read()) \
+                       .hexdigest()
+    h_exp_2 = hashlib.md5(open('test-inc3_2.nii', 'rb')
+                           .read()) \
+                      .hexdigest()
+
+    assert h_prog_1 == h_exp_1
+    assert h_prog_2 == h_exp_2

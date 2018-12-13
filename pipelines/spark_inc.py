@@ -45,7 +45,7 @@ def read_img(filename, data, benchmark, start, output_dir, bench_dir=None):
 
     start_time = time() - start
 
-    print('Reading image')
+    print('Reading image', filename)
     # load binary data into Nibabel
     fh = nib.FileHolder(fileobj=BytesIO(data))
     im = nib.Nifti1Image.from_file_map({'header': fh, 'image': fh})
@@ -68,7 +68,7 @@ def read_img(filename, data, benchmark, start, output_dir, bench_dir=None):
 
 def increment_data(idx, filename, data, metadata, delay, benchmark, start,
                    output_dir, iteration=0, work_dir=None, bench_file=None,
-                   cli=False):
+                   cli=False, ca=None):
 
     start_time = time() - start
 
@@ -87,6 +87,11 @@ def increment_data(idx, filename, data, metadata, delay, benchmark, start,
     if not cli:
         print("Incrementing data in memory")
         data += 1
+
+        if ca is not None:
+            data += ca
+
+        print(data[0:10,0,0])
         sleep(delay)
     else:
         work_dir = output_dir if work_dir is None else work_dir
@@ -187,6 +192,8 @@ def main():
     parser.add_argument('--cli', action='store_true',
                         help='use cli program')
     parser.add_argument('--work_dir', type=str, help="working directory")
+    parser.add_argument('--computed_avg', action='store_true',
+                        help='perform computed average')
 
     args = parser.parse_args()
 
@@ -218,13 +225,26 @@ def main():
         imRDD = imRDD.map(lambda x: read_img(x[0], x[1],
                                              args.benchmark,
                                              start, output_dir,
-                                             bench_dir=benchmark_dir))
+                                             bench_dir=benchmark_dir)).cache()
 
+        ca = None
         for i in range(args.iterations):
+            #print(ca[0:10,0,0])
             imRDD = imRDD.map(lambda x: increment_data(x[0], x[1], x[2], x[3],
                                                        delay, args.benchmark,
                                                        start, output_dir,
-                                                       bench_file=x[4]))
+                                                       bench_file=x[4],
+                                                       ca=ca)).cache()
+            ca = None
+            data = imRDD.map(lambda x: x[2]).collect()
+            for arr in data:
+                if ca is None:
+                    ca = arr.astype(np.float64)
+                else:
+                    ca += arr.astype(np.float64)
+            ca /= len(data)
+            ca = ca.astype(np.uint16)
+
     else:
         # get all filenames
         files = glob(os.path.join(args.bb_dir, '*'))
